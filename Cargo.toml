@@ -1,0 +1,73 @@
+[package]
+name = "LANShare-RS"
+version = "2.0.0-Rust-dev"
+edition = "2024"
+
+# 数值版本号：发版时和上面的 `version` 一起改。它放不进 `version` 字段——Cargo 用 semver 解析，
+# 硬要求「主.次.修订」三段，单个整数直接报错；写成 `2611001.0.0` 虽然合法，但版本名会跟着变成
+# `V2611001.0.0`，「关于」页、exe 版本资源和查询串里的 versionName 全被带歪。所以放这儿：
+# `[package.metadata]` 是 Cargo 明确留给项目自定义的区，它自己不看也不校验，也就传不进 `env!`，
+# 得由 build.rs 读出来注入 `LANSHARE_VERSION_CODE`，代码那头见 `utils::update::VERSION_CODE`。
+#
+# 编排是**前四位 `YYMM` + 末三位流水**，和原版 `LANSHARE_VERSION`（2601008）、安卓 `versionCode`
+# （2601009）同一套，**不能从上面那串 semver 换算**：换算出来只剩 2000000，跟服务端
+# `release_windows_rust` 那一行的 2601008 一比就成了「每次启动都提示有新版」。发 Rust 版时记得请
+# 服务端把那一行的 `versionCode` 填成大于这里的数，否则用户永远等不到提示。
+#
+# 只认一种写法：表名、键名一处都不能改，值必须是纯数字（加引号、后面再跟 `#` 注释都认）。
+# 找不到或格式不对时 build.rs 直接让构建失败，不静默退回默认值——那种现象只是界面上
+# 「永远没更新」，不看二进制里的数根本查不出来。
+[package.metadata.lanshare]
+version-code = 2601115
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes = "0.9"
+cipher = "0.5"
+md-5 = "0.11"
+rusqlite = { version = "0.42.0", features = ["bundled"] }
+windui = "0.33"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "gif", "webp", "bmp", "tiff", "png"] }
+# JPEG 缩略图走 `image` 纯 Rust 解码（曾因 macOS 上 turbojpeg 的 cmake 源码构建太麻烦而移除）。
+sha1 = "0.11.0"
+base64 = "0.23.1"
+# 只要 SVG 渲染：二维码在界面里是矢量画的，顺带避免 qrcode 的 image 特性把依赖面撑大。
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+
+# 只保留引擎需要的几样 Win32 能力：时区、电量、网卡，图片预览「复制到剪贴板」的位图通路
+# （CF_DIB 手写 DIB 交给 SetClipboardData——arboard 这类 crate 装不上，见 utils::clipboard），
+# 以及单实例守卫（utils::single_instance：命名互斥体 + 唤起已有窗口的窗口枚举）。
+# UI 与文件对话框全靠 windui 跨平台实现。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Power",
+    "Win32_System_Time",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+] }
+
+# Linux 托盘与桌面通知走 windui 自己的后端（0.32 起原生：D-Bus StatusNotifierItem + freedesktop
+# Notifications），不再额外拉 tray-icon / notify-rust。
+
+# 把 LANShare 图标嵌进 exe（资源管理器/快捷方式显示），仅 Windows 构建期需要。
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# 缩略图链路的纯 Rust 热点（JPEG/PNG/deflate 解码、Lanczos3 缩放）在未优化的 debug 下慢一个
+# 数量级，单独给这几个 crate 开 -O3，`cargo run` 的解码体感接近 release，编译代价可控。
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
